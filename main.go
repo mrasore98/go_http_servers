@@ -18,7 +18,16 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 }
 
 func (cfg *apiConfig) fsHitsHandler(w http.ResponseWriter, req *http.Request) {
-	fmt.Fprintf(w, "Hits: %v", cfg.fileserverHits.Load())
+	hitTemplate := `
+	<html>
+  	<body>
+    	<h1>Welcome, Chirpy Admin</h1>
+    	<p>Chirpy has been visited %d times!</p>
+  	</body>
+	</html>
+	`
+	w.Header().Set("Content-Type", "text/html")
+	fmt.Fprintf(w, hitTemplate, cfg.fileserverHits.Load())
 }
 
 func (cfg *apiConfig) fsResetHandler(w http.ResponseWriter, req *http.Request) {
@@ -31,9 +40,9 @@ func main() {
 	mux := http.NewServeMux()
 	fsHandler := http.StripPrefix("/app", http.FileServer(http.Dir(".")))
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(fsHandler))
-	mux.HandleFunc("GET /healthz", healthCheck)
-	mux.HandleFunc("GET /metrics", apiCfg.fsHitsHandler)
-	mux.HandleFunc("POST /reset", apiCfg.fsResetHandler)
+	mux.HandleFunc("GET /api/healthz", healthCheck)
+	mux.HandleFunc("GET /admin/metrics", apiCfg.fsHitsHandler)
+	mux.HandleFunc("POST /admin/reset", apiCfg.fsResetHandler)
 	server := http.Server{Addr: ":8080", Handler: mux}
 	server.ListenAndServe()
 }
