@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync/atomic"
@@ -41,6 +42,7 @@ func main() {
 	fsHandler := http.StripPrefix("/app", http.FileServer(http.Dir(".")))
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(fsHandler))
 	mux.HandleFunc("GET /api/healthz", healthCheck)
+	mux.HandleFunc("POST /api/validate_chirp", validateChirp)
 	mux.HandleFunc("GET /admin/metrics", apiCfg.fsHitsHandler)
 	mux.HandleFunc("POST /admin/reset", apiCfg.fsResetHandler)
 	server := http.Server{Addr: ":8080", Handler: mux}
@@ -51,4 +53,37 @@ func healthCheck(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
+}
+
+func validateChirp(w http.ResponseWriter, req *http.Request) {
+	type chirp struct {
+		Body string `json:"body"`
+	}
+	type returnVals struct {
+		Valid bool   `json:"valid"`
+		Error string `json:"error"`
+	}
+
+	decoder := json.NewDecoder(req.Body)
+	text := chirp{}
+	err := decoder.Decode(&text)
+
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		response, _ := json.Marshal(returnVals{Error: fmt.Sprintf("%v", err)})
+		w.Write(response)
+		return
+	}
+
+	valid := len([]rune(text.Body)) <= 140
+	if valid {
+		w.WriteHeader(http.StatusOK)
+		response, _ := json.Marshal(returnVals{Valid: len([]rune(text.Body)) <= 140})
+		w.Write(response)
+	} else {
+		w.WriteHeader(http.StatusBadRequest)
+		response, _ := json.Marshal(returnVals{Error: "chirp too long"})
+		w.Write(response)
+	}
 }
