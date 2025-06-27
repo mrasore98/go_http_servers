@@ -1,14 +1,27 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"sync/atomic"
+
+	"github.com/mrasore98/go_http_servers/internal/database"
+
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
 )
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
+	dbQueries      *database.Queries
+}
+
+type returnErr struct {
+	Error string `json:"error"`
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -37,7 +50,14 @@ func (cfg *apiConfig) fsResetHandler(w http.ResponseWriter, req *http.Request) {
 }
 
 func main() {
-	apiCfg := apiConfig{fileserverHits: atomic.Int32{}}
+	godotenv.Load()
+	dbURL := os.Getenv("DB_URL")
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		panic("Error opening database")
+	}
+	dbQueries := database.New(db)
+	apiCfg := apiConfig{fileserverHits: atomic.Int32{}, dbQueries: dbQueries}
 	mux := http.NewServeMux()
 	fsHandler := http.StripPrefix("/app", http.FileServer(http.Dir(".")))
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(fsHandler))
@@ -55,13 +75,23 @@ func healthCheck(w http.ResponseWriter, req *http.Request) {
 	w.Write([]byte("OK"))
 }
 
+func respondWithError(w http.ResponseWriter, code int, msg string) {
+	respondWithJSON(w, code, returnErr{Error: msg})
+}
+
+func respondWithJSON(w http.ResponseWriter, code int, payload any) {
+	w.WriteHeader(code)
+	response, _ := json.Marshal(payload)
+	w.Write(response)
+}
+
 func validateChirp(w http.ResponseWriter, req *http.Request) {
 	type chirp struct {
 		Body string `json:"body"`
 	}
 	type returnVals struct {
-		Valid bool   `json:"valid"`
-		Error string `json:"error"`
+		Valid   bool   `json:"valid,omitempty"`
+		Cleaned string `json:"cleaned_body,omitempty"`
 	}
 
 	decoder := json.NewDecoder(req.Body)
@@ -70,20 +100,30 @@ func validateChirp(w http.ResponseWriter, req *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		response, _ := json.Marshal(returnVals{Error: fmt.Sprintf("%v", err)})
-		w.Write(response)
+		respondWithError(w, http.StatusBadRequest, fmt.Sprintf("%v", err))
 		return
 	}
 
 	valid := len([]rune(text.Body)) <= 140
 	if valid {
-		w.WriteHeader(http.StatusOK)
-		response, _ := json.Marshal(returnVals{Valid: len([]rune(text.Body)) <= 140})
-		w.Write(response)
+		respondWithJSON(w, http.StatusOK, returnVals{Cleaned: removeProfanity(text.Body)})
 	} else {
-		w.WriteHeader(http.StatusBadRequest)
-		response, _ := json.Marshal(returnVals{Error: "chirp too long"})
-		w.Write(response)
+		respondWithError(w, http.StatusBadRequest, "chirp too long")
 	}
+}
+
+func removeProfanity(msg string) string {
+	profaneWords := map[string]bool{
+		"kerfuffle": true,
+		"sharbert":  true,
+		"fornax":    true,
+	}
+
+	words := strings.Split(msg, " ")
+	for idx, word := range words {
+		if profaneWords[strings.ToLower(word)] {
+			words[idx] = "****"
+		}
+	}
+	return strings.Join(words, " ")
 }
