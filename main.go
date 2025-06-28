@@ -74,7 +74,11 @@ func (cfg *apiConfig) fsResetHandler(w http.ResponseWriter, req *http.Request) {
 }
 
 func (cfg *apiConfig) createChirp(w http.ResponseWriter, req *http.Request) {
-	params := database.CreateChirpParams{}
+	type postData struct {
+		Body   string        `json:"body"`
+		UserID uuid.NullUUID `json:"user_id"`
+	}
+	params := postData{}
 	if err := json.NewDecoder(req.Body).Decode(&params); err != nil {
 		respondWithError(w, http.StatusBadRequest, "error reading payload data")
 		return
