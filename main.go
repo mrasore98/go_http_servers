@@ -30,6 +30,14 @@ type User struct {
 	Email     string    `json:"email"`
 }
 
+type Chirp struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Body      string    `json:"body"`
+	UserID    uuid.UUID `json:"user_id"`
+}
+
 type returnErr struct {
 	Error string `json:"error"`
 }
@@ -57,13 +65,48 @@ func (cfg *apiConfig) fsHitsHandler(w http.ResponseWriter, req *http.Request) {
 func (cfg *apiConfig) fsResetHandler(w http.ResponseWriter, req *http.Request) {
 	if platform := os.Getenv("PLATFORM"); platform != "dev" {
 		w.WriteHeader(http.StatusForbidden)
-		return
 	}
 	cfg.fileserverHits.Store(0)
 	if err := cfg.dbQueries.ClearUsers(req.Context()); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+func (cfg *apiConfig) createChirp(w http.ResponseWriter, req *http.Request) {
+	params := database.CreateChirpParams{}
+	if err := json.NewDecoder(req.Body).Decode(&params); err != nil {
+		respondWithError(w, http.StatusBadRequest, "error reading payload data")
+		return
+	}
+	fmt.Printf("request: %v", req.Body)
+	fmt.Printf("chirp body: %v\nuser id: %v", params.Body, params.UserID)
+
+	// Validate chirp contents
+	validatedBody, err := validateChirp(params.Body)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, fmt.Sprintf("%v", err))
+	}
+	// Replace body with validated and cleaned contents before adding to the database
+	newParams := database.CreateChirpParams{
+		Body:   validatedBody,
+		UserID: params.UserID,
+	}
+
+	chirp, err := cfg.dbQueries.CreateChirp(req.Context(), newParams)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "could not create chirp")
+		return
+	}
+
+	returnChirp := Chirp{
+		chirp.ID,
+		chirp.CreatedAt,
+		chirp.UpdatedAt,
+		chirp.Body,
+		chirp.UserID.UUID,
+	}
+	respondWithJSON(w, http.StatusCreated, returnChirp)
 }
 
 func (cfg *apiConfig) createUser(w http.ResponseWriter, req *http.Request) {
@@ -107,7 +150,7 @@ func main() {
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(fsHandler))
 	// API endpoints
 	mux.HandleFunc("GET /api/healthz", healthCheck)
-	mux.HandleFunc("POST /api/validate_chirp", validateChirp)
+	mux.HandleFunc("POST /api/chirps", apiCfg.createChirp)
 	mux.HandleFunc("POST /api/users", apiCfg.createUser)
 	// Admin endpoints
 	mux.HandleFunc("GET /admin/metrics", apiCfg.fsHitsHandler)
@@ -128,36 +171,17 @@ func respondWithError(w http.ResponseWriter, code int, msg string) {
 }
 
 func respondWithJSON(w http.ResponseWriter, code int, payload any) {
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	response, _ := json.Marshal(payload)
 	w.Write(response)
 }
 
-func validateChirp(w http.ResponseWriter, req *http.Request) {
-	type chirp struct {
-		Body string `json:"body"`
+func validateChirp(content string) (string, error) {
+	if valid := len([]rune(content)) <= 140; !valid {
+		return "", fmt.Errorf("chirp too long")
 	}
-	type returnVals struct {
-		Valid   bool   `json:"valid,omitempty"`
-		Cleaned string `json:"cleaned_body,omitempty"`
-	}
-
-	decoder := json.NewDecoder(req.Body)
-	text := chirp{}
-	err := decoder.Decode(&text)
-
-	w.Header().Set("Content-Type", "application/json")
-	if err != nil {
-		respondWithError(w, http.StatusBadRequest, fmt.Sprintf("%v", err))
-		return
-	}
-
-	valid := len([]rune(text.Body)) <= 140
-	if valid {
-		respondWithJSON(w, http.StatusOK, returnVals{Cleaned: removeProfanity(text.Body)})
-	} else {
-		respondWithError(w, http.StatusBadRequest, "chirp too long")
-	}
+	return removeProfanity(content), nil
 }
 
 func removeProfanity(msg string) string {
