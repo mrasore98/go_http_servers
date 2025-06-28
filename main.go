@@ -55,6 +55,10 @@ func (cfg *apiConfig) fsHitsHandler(w http.ResponseWriter, req *http.Request) {
 }
 
 func (cfg *apiConfig) fsResetHandler(w http.ResponseWriter, req *http.Request) {
+	if platform := os.Getenv("PLATFORM"); platform != "dev" {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
 	cfg.fileserverHits.Store(0)
 	if err := cfg.dbQueries.ClearUsers(req.Context()); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
