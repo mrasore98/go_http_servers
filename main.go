@@ -8,7 +8,9 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/mrasore98/go_http_servers/internal/database"
 
 	"github.com/joho/godotenv"
@@ -18,6 +20,14 @@ import (
 type apiConfig struct {
 	fileserverHits atomic.Int32
 	dbQueries      *database.Queries
+}
+
+// Create a wrapper User struct to control JSON keys
+type User struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
 }
 
 type returnErr struct {
@@ -46,7 +56,36 @@ func (cfg *apiConfig) fsHitsHandler(w http.ResponseWriter, req *http.Request) {
 
 func (cfg *apiConfig) fsResetHandler(w http.ResponseWriter, req *http.Request) {
 	cfg.fileserverHits.Store(0)
+	if err := cfg.dbQueries.ClearUsers(req.Context()); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+	}
 	w.WriteHeader(http.StatusOK)
+}
+
+func (cfg *apiConfig) createUser(w http.ResponseWriter, req *http.Request) {
+	type postData struct {
+		Email string `json:"email"`
+	}
+
+	params := postData{}
+	if err := json.NewDecoder(req.Body).Decode(&params); err != nil {
+		respondWithError(w, http.StatusBadRequest, "error reading payload data")
+		return
+	}
+
+	user, err := cfg.dbQueries.CreateUser(req.Context(), params.Email)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "could not create user")
+	}
+
+	newUser := User{
+		ID:        user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.CreatedAt,
+		Email:     user.Email,
+	}
+
+	respondWithJSON(w, http.StatusCreated, newUser)
 }
 
 func main() {
@@ -59,12 +98,17 @@ func main() {
 	dbQueries := database.New(db)
 	apiCfg := apiConfig{fileserverHits: atomic.Int32{}, dbQueries: dbQueries}
 	mux := http.NewServeMux()
+	// "App" endpoints - serves static files
 	fsHandler := http.StripPrefix("/app", http.FileServer(http.Dir(".")))
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(fsHandler))
+	// API endpoints
 	mux.HandleFunc("GET /api/healthz", healthCheck)
 	mux.HandleFunc("POST /api/validate_chirp", validateChirp)
+	mux.HandleFunc("POST /api/users", apiCfg.createUser)
+	// Admin endpoints
 	mux.HandleFunc("GET /admin/metrics", apiCfg.fsHitsHandler)
 	mux.HandleFunc("POST /admin/reset", apiCfg.fsResetHandler)
+	// Start server
 	server := http.Server{Addr: ":8080", Handler: mux}
 	server.ListenAndServe()
 }

@@ -7,7 +7,6 @@ package database
 
 import (
 	"context"
-	"database/sql"
 )
 
 const createUser = `-- name: CreateUser :one
@@ -21,7 +20,7 @@ VALUES (
 RETURNING id, created_at, updated_at, email
 `
 
-func (q *Queries) CreateUser(ctx context.Context, email sql.NullString) (User, error) {
+func (q *Queries) CreateUser(ctx context.Context, email string) (User, error) {
 	row := q.db.QueryRowContext(ctx, createUser, email)
 	var i User
 	err := row.Scan(
