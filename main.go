@@ -70,7 +70,24 @@ func (cfg *apiConfig) fsResetHandler(w http.ResponseWriter, req *http.Request) {
 	if err := cfg.dbQueries.ClearUsers(req.Context()); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 	}
+	if err := cfg.dbQueries.ClearChirps(req.Context()); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+	}
 	w.WriteHeader(http.StatusOK)
+}
+
+func (cfg *apiConfig) listChirps(w http.ResponseWriter, req *http.Request) {
+	chirps, err := cfg.dbQueries.GetAllChirps(req.Context())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error listing chirps")
+		return
+	}
+	var respChirps []Chirp
+	for _, oldChirp := range chirps {
+		newChirp := Chirp{ID: oldChirp.ID, CreatedAt: oldChirp.CreatedAt, UpdatedAt: oldChirp.UpdatedAt, Body: oldChirp.Body, UserID: oldChirp.UserID.UUID}
+		respChirps = append(respChirps, newChirp)
+	}
+	respondWithJSON(w, http.StatusOK, respChirps)
 }
 
 func (cfg *apiConfig) createChirp(w http.ResponseWriter, req *http.Request) {
@@ -83,8 +100,8 @@ func (cfg *apiConfig) createChirp(w http.ResponseWriter, req *http.Request) {
 		respondWithError(w, http.StatusBadRequest, "error reading payload data")
 		return
 	}
-	fmt.Printf("request: %v", req.Body)
-	fmt.Printf("chirp body: %v\nuser id: %v", params.Body, params.UserID)
+	// fmt.Printf("request: %v", req.Body)
+	// fmt.Printf("chirp body: %v\nuser id: %v", params.Body, params.UserID)
 
 	// Validate chirp contents
 	validatedBody, err := validateChirp(params.Body)
@@ -155,6 +172,7 @@ func main() {
 	// API endpoints
 	mux.HandleFunc("GET /api/healthz", healthCheck)
 	mux.HandleFunc("POST /api/chirps", apiCfg.createChirp)
+	mux.HandleFunc("GET /api/chirps", apiCfg.listChirps)
 	mux.HandleFunc("POST /api/users", apiCfg.createUser)
 	// Admin endpoints
 	mux.HandleFunc("GET /admin/metrics", apiCfg.fsHitsHandler)
