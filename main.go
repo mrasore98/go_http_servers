@@ -90,6 +90,27 @@ func (cfg *apiConfig) listChirps(w http.ResponseWriter, req *http.Request) {
 	respondWithJSON(w, http.StatusOK, respChirps)
 }
 
+func (cfg *apiConfig) getChirpByID(w http.ResponseWriter, req *http.Request) {
+	chirpIDString := req.PathValue("chirpID")
+	chirpID, err := uuid.Parse(chirpIDString)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "invalid chirp id")
+	}
+	chirp, err := cfg.dbQueries.GetChirpByID(req.Context(), chirpID)
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, "no chirp with provided id")
+	}
+	respChirp := Chirp{
+		ID:        chirp.ID,
+		CreatedAt: chirp.CreatedAt,
+		UpdatedAt: chirp.UpdatedAt,
+		Body:      chirp.Body,
+		UserID:    chirp.UserID.UUID,
+	}
+
+	respondWithJSON(w, http.StatusOK, respChirp)
+}
+
 func (cfg *apiConfig) createChirp(w http.ResponseWriter, req *http.Request) {
 	type postData struct {
 		Body   string        `json:"body"`
@@ -173,6 +194,7 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", healthCheck)
 	mux.HandleFunc("POST /api/chirps", apiCfg.createChirp)
 	mux.HandleFunc("GET /api/chirps", apiCfg.listChirps)
+	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.getChirpByID)
 	mux.HandleFunc("POST /api/users", apiCfg.createUser)
 	// Admin endpoints
 	mux.HandleFunc("GET /admin/metrics", apiCfg.fsHitsHandler)
